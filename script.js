@@ -1,12 +1,25 @@
-function calculateGMM(data, nComponents) {
-    // Placeholder function to calculate GMM
-    // Implement GMM calculation logic here
-    return {
-        means: [],
-        stdDevs: [],
-        weights: [],
-        pdf: function(x) { return 0; }  // Placeholder for the actual PDF function
-    };
+function calculateAIC(data, gmm) {
+    const nComponents = gmm.weights.length;
+    const logLikelihood = gmm.scoreSamples(data).reduce((a, b) => a + b, 0);
+    return 2 * nComponents - 2 * logLikelihood;
+}
+
+function findOptimalGMM(data) {
+    const maxComponents = 10;
+    let optimalGMM = null;
+    let lowestAIC = Infinity;
+
+    for (let n = 1; n <= maxComponents; n++) {
+        const gmm = ml5.gaussianMixtureModel(data, { nComponents: n });
+        const aic = calculateAIC(data, gmm);
+
+        if (aic < lowestAIC) {
+            lowestAIC = aic;
+            optimalGMM = gmm;
+        }
+    }
+    
+    return optimalGMM;
 }
 
 function drawChart(subject, scores, gmm) {
@@ -100,9 +113,8 @@ function analyzeData() {
         return;
     }
 
-    // Calculate optimal GMM
-    const nComponents = 2;  // Replace with actual component calculation based on AIC/BIC
-    const gmm = calculateGMM(scores, nComponents);
+    // Find optimal GMM using AIC
+    const gmm = findOptimalGMM(scores);
 
     // Clear previous chart
     d3.select("#chart").html("");
