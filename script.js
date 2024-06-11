@@ -1,62 +1,3 @@
-function gaussianPDF(x, mean, variance) {
-    const coefficient = 1 / Math.sqrt(2 * Math.PI * variance);
-    const exponential = Math.exp(-0.5 * Math.pow((x - mean) / Math.sqrt(variance), 2));
-    return coefficient * exponential;
-}
-
-function calculateGMM(data, nComponents) {
-    // Randomly initialize means, variances, and weights
-    const means = Array.from({ length: nComponents }, () => Math.random() * (Math.max(...data) - Math.min(...data)) + Math.min(...data));
-    const variances = Array.from({ length: nComponents }, () => Math.random());
-    const weights = Array.from({ length: nComponents }, () => 1 / nComponents);
-
-    const maxIterations = 100;
-    const tolerance = 1e-6;
-
-    for (let iteration = 0; iteration < maxIterations; iteration++) {
-        // E-step: calculate responsibilities
-        const responsibilities = data.map(x => {
-            const prob = means.map((mean, k) => weights[k] * gaussianPDF(x, mean, variances[k]));
-            const sumProb = prob.reduce((a, b) => a + b, 0);
-            return prob.map(p => p / sumProb);
-        });
-
-        // M-step: update weights, means, and variances
-        const newWeights = Array(nComponents).fill(0);
-        const newMeans = Array(nComponents).fill(0);
-        const newVariances = Array(nComponents).fill(0);
-
-        responsibilities.forEach((r, i) => {
-            r.forEach((rik, k) => {
-                newWeights[k] += rik;
-                newMeans[k] += rik * data[i];
-                newVariances[k] += rik * Math.pow(data[i] - means[k], 2);
-            });
-        });
-
-        newWeights.forEach((w, k) => {
-            newWeights[k] /= data.length;
-            newMeans[k] /= (newWeights[k] * data.length);
-            newVariances[k] /= (newWeights[k] * data.length);
-        });
-
-        // Check for convergence
-        const weightChange = Math.max(...newWeights.map((w, k) => Math.abs(w - weights[k])));
-        const meanChange = Math.max(...newMeans.map((m, k) => Math.abs(m - means[k])));
-        const varianceChange = Math.max(...newVariances.map((v, k) => Math.abs(v - variances[k])));
-
-        weights.splice(0, nComponents, ...newWeights);
-        means.splice(0, nComponents, ...newMeans);
-        variances.splice(0, nComponents, ...newVariances);
-
-        if (weightChange < tolerance && meanChange < tolerance && varianceChange < tolerance) {
-            break;
-        }
-    }
-
-    return { means, variances, weights };
-}
-
 function drawChart(subject, scores, gmm) {
     const margin = { top: 20, right: 30, bottom: 40, left: 40 },
           width = 960 - margin.left - margin.right,
@@ -99,47 +40,37 @@ function drawChart(subject, scores, gmm) {
         .attr("transform", `translate(0,${height})`)
         .call(d3.axisBottom(x));
 
-    // Add GMM PDF and percentiles
+    // 각 가우시안 컴포넌트 및 퍼센타일 추가
     const line = d3.line()
         .x(d => x(d[0]))
-        .y(d => y(d[1]));
+        .y(d => y(d[1] * height));
 
-    const pdfData = [];
-    for (let i = x.domain()[0]; i <= x.domain()[1]; i += 0.1) {
-        const pdf = gmm.means.reduce((sum, mean, k) => {
-            return sum + gmm.weights[k] * gaussianPDF(i, mean, gmm.variances[k]);
-        }, 0);
-        pdfData.push([i, pdf * scores.length]);
-    }
+    gmm.weights.forEach((weight, i) => {
+        const mean = gmm.means[i];
+        const variance = gmm.variances[i];
+        const pdfData = d3.range(d3.min(scores), d3.max(scores), 0.1).map(v => [v, gaussianPDF(v, mean, variance) * weight]);
 
-    svg.append("path")
-        .datum(pdfData)
-        .attr("fill", "none")
-        .attr("stroke", "red")
-        .attr("stroke-width", 1.5)
-        .attr("d", line);
-
-    const percentiles = [4, 11, 23, 40, 60, 77, 89, 96];
-    const cumulativeDensity = math.cumsum(pdfData.map(d => d[1])) / d3.sum(pdfData, d => d[1]);
-
-    percentiles.forEach(p => {
-        const percValue = pdfData.find((_, i) => cumulativeDensity[i] >= p / 100)[0];
-        svg.append("line")
-            .attr("x1", x(percValue))
-            .attr("x2", x(percValue))
-            .attr("y1", y(0))
-            .attr("y2", y(d3.max(bins, d => d.length)))
-            .attr("stroke", "blue")
-            .attr("stroke-dasharray", "4");
+        svg.append("path")
+            .datum(pdfData)
+            .attr("fill", "none")
+            .attr("stroke", ['red', 'green', 'blue'][i]) // 다른 색상으로 각 컴포넌트 구분
+            .attr("stroke-width", 2)
+            .attr("d", line);
 
         svg.append("text")
-            .attr("x", x(percValue))
-            .attr("y", y(d3.max(bins, d => d.length)))
+            .attr("x", x(mean))
+            .attr("y", y(0))
             .attr("dy", -5)
             .attr("text-anchor", "middle")
-            .attr("fill", "blue")
-            .text(`${p}%`);
+            .attr("fill", ['red', 'green', 'blue'][i])
+            .text(`Mean: ${mean.toFixed(2)}, Std Dev: ${Math.sqrt(variance).toFixed(2)}, Weight: ${weight.toFixed(2)}`);
     });
+}
+
+function gaussianPDF(x, mean, variance) {
+    const coefficient = 1 / Math.sqrt(2 * Math.PI * variance);
+    const exponential = Math.exp(-0.5 * Math.pow((x - mean) / Math.sqrt(variance), 2));
+    return coefficient * exponential;
 }
 
 function analyzeData() {
@@ -151,11 +82,14 @@ function analyzeData() {
         return;
     }
 
-    // Calculate GMM
-    const gmm = calculateGMM(scores, 2);  // Use 2 components as an example
+    const nComponents = 2; // 컴포넌트 수는 예시로 2를 사용합니다. 필요에 따라 조정 가능합니다.
+    const gmm = calculateGMM(scores, nComponents);
 
-    // Clear previous chart
-    d3.select("#chart").html("");
-
+    d3.select("#chart").html(""); // 이전 차트 삭제
     drawChart('User Data', scores, gmm);
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    const analyzeButton = document.querySelector('button');
+    analyzeButton.addEventListener('click', analyzeData);
+});
