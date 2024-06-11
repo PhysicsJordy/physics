@@ -1,25 +1,60 @@
-function calculateAIC(data, gmm) {
-    const nComponents = gmm.weights.length;
-    const logLikelihood = gmm.scoreSamples(data).reduce((a, b) => a + b, 0);
-    return 2 * nComponents - 2 * logLikelihood;
+function gaussianPDF(x, mean, variance) {
+    const coefficient = 1 / Math.sqrt(2 * Math.PI * variance);
+    const exponential = Math.exp(-0.5 * Math.pow((x - mean) / Math.sqrt(variance), 2));
+    return coefficient * exponential;
 }
 
-function findOptimalGMM(data) {
-    const maxComponents = 10;
-    let optimalGMM = null;
-    let lowestAIC = Infinity;
+function calculateGMM(data, nComponents) {
+    // Randomly initialize means, variances, and weights
+    const means = Array.from({ length: nComponents }, () => Math.random() * (Math.max(...data) - Math.min(...data)) + Math.min(...data));
+    const variances = Array.from({ length: nComponents }, () => Math.random());
+    const weights = Array.from({ length: nComponents }, () => 1 / nComponents);
 
-    for (let n = 1; n <= maxComponents; n++) {
-        const gmm = ml5.gaussianMixtureModel(data, { nComponents: n });
-        const aic = calculateAIC(data, gmm);
+    const maxIterations = 100;
+    const tolerance = 1e-6;
 
-        if (aic < lowestAIC) {
-            lowestAIC = aic;
-            optimalGMM = gmm;
+    for (let iteration = 0; iteration < maxIterations; iteration++) {
+        // E-step: calculate responsibilities
+        const responsibilities = data.map(x => {
+            const prob = means.map((mean, k) => weights[k] * gaussianPDF(x, mean, variances[k]));
+            const sumProb = prob.reduce((a, b) => a + b, 0);
+            return prob.map(p => p / sumProb);
+        });
+
+        // M-step: update weights, means, and variances
+        const newWeights = Array(nComponents).fill(0);
+        const newMeans = Array(nComponents).fill(0);
+        const newVariances = Array(nComponents).fill(0);
+
+        responsibilities.forEach((r, i) => {
+            r.forEach((rik, k) => {
+                newWeights[k] += rik;
+                newMeans[k] += rik * data[i];
+                newVariances[k] += rik * Math.pow(data[i] - means[k], 2);
+            });
+        });
+
+        newWeights.forEach((w, k) => {
+            newWeights[k] /= data.length;
+            newMeans[k] /= (newWeights[k] * data.length);
+            newVariances[k] /= (newWeights[k] * data.length);
+        });
+
+        // Check for convergence
+        const weightChange = Math.max(...newWeights.map((w, k) => Math.abs(w - weights[k])));
+        const meanChange = Math.max(...newMeans.map((m, k) => Math.abs(m - means[k])));
+        const varianceChange = Math.max(...newVariances.map((v, k) => Math.abs(v - variances[k])));
+
+        weights.splice(0, nComponents, ...newWeights);
+        means.splice(0, nComponents, ...newMeans);
+        variances.splice(0, nComponents, ...newVariances);
+
+        if (weightChange < tolerance && meanChange < tolerance && varianceChange < tolerance) {
+            break;
         }
     }
-    
-    return optimalGMM;
+
+    return { means, variances, weights };
 }
 
 function drawChart(subject, scores, gmm) {
@@ -71,7 +106,10 @@ function drawChart(subject, scores, gmm) {
 
     const pdfData = [];
     for (let i = x.domain()[0]; i <= x.domain()[1]; i += 0.1) {
-        pdfData.push([i, gmm.pdf(i) * scores.length]);
+        const pdf = gmm.means.reduce((sum, mean, k) => {
+            return sum + gmm.weights[k] * gaussianPDF(i, mean, gmm.variances[k]);
+        }, 0);
+        pdfData.push([i, pdf * scores.length]);
     }
 
     svg.append("path")
@@ -113,8 +151,8 @@ function analyzeData() {
         return;
     }
 
-    // Find optimal GMM using AIC
-    const gmm = findOptimalGMM(scores);
+    // Calculate GMM
+    const gmm = calculateGMM(scores, 2);  // Use 2 components as an example
 
     // Clear previous chart
     d3.select("#chart").html("");
